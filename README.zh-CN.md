@@ -183,3 +183,7 @@ openaic-tool verify <agent.pem> --user <principal.pem> [--no-check-spki]
 ## License
 
 Apache-2.0。`lib/cjson` 以独立 MIT 许可 vendored。见 [LICENSE](LICENSE)。
+
+## 社区
+
+问题、反馈与移植状态：[AIC Discussions](https://github.com/varwof/aic-jwt/discussions)

@@ -211,3 +211,7 @@ to contribute:
 
 Apache-2.0. `lib/cjson` is vendored under the separate MIT license. See
 [LICENSE](LICENSE).
+
+## Community
+
+Questions, feedback, and port status: [AIC Discussions](https://github.com/varwof/aic-jwt/discussions)
