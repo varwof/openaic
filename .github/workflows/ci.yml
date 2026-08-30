@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Checkout core (test-vector reference implementation)
+        uses: actions/checkout@v4
+        with:
+          repository: varwof/core
+          path: core
+
+      - name: Checkout types
+        uses: actions/checkout@v4
+        with:
+          repository: varwof/types
+          path: types
+
+      - name: Generate cross-consistency vectors (Go)
+        run: |
+          cd test/vectors
+          go mod tidy
+          go run . -out ../../test/vectors/out
+
+      - name: Fetch OpenSSL 3.5.7
+        run: make fetch
+
+      - name: Apply patch and build
+        run: make build
+
+      - name: Run OpenSSL test suite
+        run: make -C patch-dir test
+
+      - name: Run openaic C tests
+        run: |
+          make test-helper
+          cc -o build/aic_ext_test test/aic_ext_test.c \
+            src/v3_aic.c src/aic_verify.c lib/openaic.c lib/cjson/cJSON.c \
+            -Isrc -Ilib -Ilib/cjson \
+            -Ipatch-dir/include -Lpatch-dir -lcrypto \
+            -Wall -Wextra -O2
+          LD_LIBRARY_PATH=patch-dir ./build/aic_ext_test test/vectors/out
+
+      - name: Verify patch applies cleanly to pristine tree
+        run: |
+          cd openssl-src && git init -q && git add -A && git -c user.email=ci@openaic -c user.name=ci commit -qm base
+          cd .. && git apply --check patch/openssl-3.5.7-aic.patch --directory=openssl-src

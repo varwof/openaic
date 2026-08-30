@@ -1,0 +1,12 @@
+# openaic
+
+# Generated build artifacts
+/openssl-src/
+/patch-dir/
+/openssl-*.tar.gz
+/openssl-*.tar.gz.sha256
+/build/
+/*.o
+
+# Go
+/test/vectors/out/
