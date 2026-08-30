@@ -6,8 +6,8 @@ OPENSSL_TARBALL   := openssl-$(OPENSSL_VERSION).tar.gz
 OPENSSL_URL_BASE  := https://github.com/openssl/openssl/releases/download/openssl-$(OPENSSL_VERSION)
 
 # Optional SOCKS5 proxy (e.g. Tor) used by `make fetch` when HTTPS direct fails.
-# Empty = direct download. Overridable from the environment (e.g. CI sets
-# CONNECTION_PROXY= to force a direct download).
+# Empty = direct download. Overridable from the environment:
+#   CONNECTION_PROXY= make fetch   # force direct download
 CONNECTION_PROXY  ?= 127.0.0.1:9050
 
 # Source layout
