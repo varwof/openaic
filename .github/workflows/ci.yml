@@ -4,10 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 1'   # weekly full suite
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CONNECTION_PROXY: ""   # CI: direct download (config.mk default is Tor)
     steps:
       - uses: actions/checkout@v4
 
@@ -16,13 +21,7 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Checkout core (test-vector reference implementation)
-        uses: actions/checkout@v4
-        with:
-          repository: varwof/core
-          path: core
-
-      - name: Checkout types
+      - name: Checkout types (vector reference)
         uses: actions/checkout@v4
         with:
           repository: varwof/types
@@ -40,10 +39,7 @@ jobs:
       - name: Apply patch and build
         run: make build
 
-      - name: Run OpenSSL test suite
-        run: make -C patch-dir test
-
-      - name: Run openaic C tests
+      - name: Run AIC extension tests
         run: |
           make test-helper
           cc -o build/aic_ext_test test/aic_ext_test.c \
@@ -55,5 +51,20 @@ jobs:
 
       - name: Verify patch applies cleanly to pristine tree
         run: |
-          cd openssl-src && git init -q && git add -A && git -c user.email=ci@openaic -c user.name=ci commit -qm base
+          cd openssl-src && git init -q && git add -A && \
+            git -c user.email=ci@openaic -c user.name=ci commit -qm base
           cd .. && git apply --check patch/openssl-3.5.7-aic.patch --directory=openssl-src
+
+  full-suite:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    env:
+      CONNECTION_PROXY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch OpenSSL 3.5.7
+        run: make fetch
+      - name: Apply patch and build
+        run: make build
+      - name: Run full OpenSSL test suite
+        run: make -C patch-dir test
