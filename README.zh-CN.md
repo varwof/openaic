@@ -1,5 +1,9 @@
 # openaic — 为 OpenSSL 3.5 LTS 提供 AIC（证书内授权）支持
 
+> **⚠️ 实验性。** 本 C/OpenSSL 实现需要从源码打补丁并重建 OpenSSL 3.5，当前
+> **不维护到 CI 全绿**，可能无法在所有环境构建。**不可用于生产。** 评估请使用
+> Go 实现（[varwof/core](https://github.com/varwof/core)）或其他语言移植。
+
 > **招募维护者。** 这是一个开放、面向社区的实现。我们欢迎活跃维护者参与
 > 代码审查、移植、打包与平台测试。参与方式见
 > [CONTRIBUTING.md](../../.github/CONTRIBUTING.md)（org 级）与下文"贡献"一节。
@@ -49,7 +53,7 @@ AIC 有五种语言实现，全部与 Go 参考实现字节级兼容：
 |------|------|------|
 | Go（参考实现） | [varwof/types](https://github.com/varwof/types) | 完整 |
 | TypeScript | [varwof/aic-jwt](https://github.com/varwof/aic-jwt) | 完整（18 测试） |
-| C / OpenSSL | **本仓库（openaic）** | 完整（13 测试） |
+| C / OpenSSL | **本仓库（openaic）** | 实验性（13 测试） |
 | Java | [varwof/aic-lib-java](https://github.com/varwof/aic-lib-java) | 完整（69 测试） |
 | C# | [varwof/aic-lib-dotnet](https://github.com/varwof/aic-lib-dotnet) | 完整（69 测试） |
 

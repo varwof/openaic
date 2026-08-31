@@ -1,5 +1,11 @@
 # openaic — AIC (Authorization in Certificates) for OpenSSL 3.5 LTS
 
+> **⚠️ Experimental.** This C/OpenSSL implementation requires patching and
+> rebuilding OpenSSL 3.5 from source. It is **not** maintained to green CI and
+> may not build in every environment. **Not for production use.** For
+> evaluation, use the Go implementation
+> ([varwof/core](https://github.com/varwof/core)) or the other language ports.
+
 > **Maintainers wanted.** This is an open, community-oriented implementation.
 > We welcome active maintainers for review, porting, packaging, and platform
 > testing. See [CONTRIBUTING.md](../../.github/CONTRIBUTING.md) (org-wide) and
@@ -60,7 +66,7 @@ reference:
 |----------|-----------|--------|
 | Go (reference) | [varwof/types](https://github.com/varwof/types) | complete |
 | TypeScript | [varwof/aic-jwt](https://github.com/varwof/aic-jwt) | complete (18 tests) |
-| C / OpenSSL | **this repo (openaic)** | complete (13 tests) |
+| C / OpenSSL | **this repo (openaic)** | experimental (13 tests) |
 | Java | [varwof/aic-lib-java](https://github.com/varwof/aic-lib-java) | complete (69 tests) |
 | C# | [varwof/aic-lib-dotnet](https://github.com/varwof/aic-lib-dotnet) | complete (69 tests) |
 
