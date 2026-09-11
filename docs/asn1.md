@@ -103,9 +103,33 @@ DelegationAuthTBS ::= SEQUENCE {
     authorizationConstraints [0] EXPLICIT SEQUENCE OF Capability OPTIONAL,
     requestedLifetime        INTEGER DEFAULT 0,
     timestamp                GeneralizedTime,
-    nonce                    OCTET STRING
+    nonce                    OCTET STRING,
+    agentKeyBinding          [1] EXPLICIT AgentKeyBinding OPTIONAL
 }
 ```
+
+### AgentKeyBinding (DA version 2, types v0.6.0)
+
+Version 2 of the DA TBS binds the delegation to the agent key actually being
+certified, closing the "swap a different agent key under the same DA" attack.
+The binding is rebuilt during verification from the agent certificate's SPKI
+(`keyHash = SHA-256(SPKI DER)`), so the signed v2 TBS only verifies for the
+agent key it was issued for. `hashAlgo` is always emitted as a bare
+`SEQUENCE { OID }` (SHA-256, no NULL parameters) to stay byte-identical with
+Go's `MakeAgentKeyBinding`.
+
+```
+AgentKeyBinding ::= SEQUENCE {
+    keyHash  OCTET STRING (SIZE(1..64)),
+    hashAlgo [0] EXPLICIT AlgorithmIdentifier OPTIONAL
+}
+```
+
+Version rules (mirrored from `types.ValidateDelegationAuthTBSVersion`):
+1 → `agentKeyBinding` MUST be absent; 2 → MUST be present and valid; any other
+version → rejected. Verification negotiates on the AIC version: 0/unspecified
+tries v2 then falls back to v1 (legacy transparency), 1 → v1 only, 2 → v2 only
+(fail-closed when the agent SPKI is unavailable).
 
 ## Consistency verification
 

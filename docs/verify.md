@@ -32,6 +32,21 @@ dependencies:
    the principal certificate's public key according to the
    `signatureAlgorithm` OID. Failure → 0.
 
+### DA version negotiation (types v0.6.0)
+
+`AIC.verify_da_ex()` negotiates the `DelegationAuthTBS` version from the AIC's
+`version` field, mirroring `core.VerifyDelegationAuthorization`:
+
+- **version 0 / unspecified** — try v2 first (agent SPKI taken from the
+  end-entity certificate), then fall back to v1 so pre-v0.6.0 certificates
+  still verify transparently.
+- **version 1** — v1 only (legacy DER, no `AgentKeyBinding`).
+- **version 2** — v2 only: the TBS gains a trailing
+  `[1] EXPLICIT AgentKeyBinding` with `keyHash = SHA-256(agent SPKI)`; fails
+  closed if the agent SPKI is unavailable or the agent key does not match the
+  one the DA was issued for (key-swap protection).
+- **any other version** — rejected.
+
 ## Signature algorithm dispatch
 
 | OID | Verification |

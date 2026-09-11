@@ -34,6 +34,13 @@ ASN1_SEQUENCE(AIC_REASON) = {
 
 IMPLEMENT_ASN1_FUNCTIONS(AIC_REASON)
 
+ASN1_SEQUENCE(AIC_AGENTKEYBINDING) = {
+    ASN1_SIMPLE(AIC_AGENTKEYBINDING, keyHash, ASN1_OCTET_STRING),
+    ASN1_EXP_OPT(AIC_AGENTKEYBINDING, hashAlgo, X509_ALGOR, 0)
+} ASN1_SEQUENCE_END(AIC_AGENTKEYBINDING)
+
+IMPLEMENT_ASN1_FUNCTIONS(AIC_AGENTKEYBINDING)
+
 ASN1_SEQUENCE(AIC_CAPABILITY) = {
     ASN1_SIMPLE(AIC_CAPABILITY, schemeId, ASN1_UTF8STRING),
     ASN1_SIMPLE(AIC_CAPABILITY, capabilityId, ASN1_UTF8STRING),
@@ -293,6 +300,16 @@ int AIC_validate(const AIC *aic, const char **perr)
         if (perr != NULL) *perr = "AIC is NULL";
         return 0;
     }
+    /* AIC version is the DA TBS version axis (types v0.6.0): 0/1 = legacy
+     * DelegationAuthTBS without AgentKeyBinding, 2 = DA v2 agent binding.
+     * Any other value is rejected (fail-closed). */
+    {
+        long v = aic->version == NULL ? 0 : ASN1_INTEGER_get(aic->version);
+        if (v != 0 && v != 1 && v != 2) {
+            if (perr != NULL) *perr = "AIC version must be 0/1 (legacy) or 2 (agent key binding)";
+            return 0;
+        }
+    }
     if (aic->agentId == NULL || ASN1_STRING_length(aic->agentId) == 0) {
         if (perr != NULL) *perr = "AIC agentId is required";
         return 0;
@@ -404,6 +421,7 @@ int AIC_validate(const AIC *aic, const char **perr)
  * ── config support (v2i) and text printing (i2v) ─────────────────────────
  *
  * v2i parses a [ aic ] section:
+ *   version               = 1 | 2     (DA TBS version; default 1)
  *   agentId                = agent-7
  *   principalUid           = realm:identifier:keyFingerprint
  *   delegationMode         = authorized | representative
@@ -528,6 +546,14 @@ void *v2i_AIC(const X509V3_EXT_METHOD *method, X509V3_CTX *ctx,
                 ? AIC_DELEGATION_REPRESENTATIVE : AIC_DELEGATION_AUTHORIZED;
             if (!ASN1_INTEGER_set(aic->delegationMode, dm))
                 goto err;
+        } else if (strcmp(cnf->name, "version") == 0) {
+            /* DA TBS version axis (types v0.6.0): 1 = legacy, 2 = agent key
+             * binding. Default is 1 (set above). */
+            long v = atol(cnf->value);
+            if (v != 1 && v != 2 && v != 0)
+                goto err;
+            if (!ASN1_INTEGER_set(aic->version, (int)v))
+                goto err;
         } else if (strcmp(cnf->name, "capability") == 0) {
             if (aic->capabilities == NULL
                 && (aic->capabilities = sk_AIC_CAPABILITY_new_null()) == NULL)
@@ -581,6 +607,14 @@ STACK_OF(CONF_VALUE) *i2v_AIC(const X509V3_EXT_METHOD *method, void *ext,
     (void)method;
     if (aic == NULL)
         return NULL;
+
+    {
+        long v = aic->version == NULL ? 1 : ASN1_INTEGER_get(aic->version);
+        char num[16];
+        snprintf(num, sizeof(num), "%ld", v);
+        if (!X509V3_add_value("version", num, &extlist))
+            return NULL;
+    }
 
     {
         char *s = asn1_str_to_c(aic->agentId);

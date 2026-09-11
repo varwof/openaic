@@ -33,6 +33,19 @@ openaic 刻意把"扩展表示"与"JSON 语义"分开，使 libcrypto 补丁尽�
    严格对应 types），用 principal 证书公钥按 `signatureAlgorithm` OID 验签。
    失败 → 0。
 
+### DA 版本协商（types v0.6.0）
+
+`AIC_verify_da_ex()` 按 AIC 的 `version` 字段协商 `DelegationAuthTBS` 版本，
+对应 `core.VerifyDelegationAuthorization`：
+
+- **version 0 / 未指定** — 先试 v2（agent SPKI 取自已校验的终端证书），
+  失败再回退 v1，兼容 v0.6.0 之前的旧证书。
+- **version 1** — 仅 v1（旧 DER，无 `AgentKeyBinding`）。
+- **version 2** — 仅 v2：TBS 尾部追加 `[1] EXPLICIT AgentKeyBinding`
+  （`keyHash = SHA-256(agent SPKI)`）；无 agent SPKI 或 agent 密钥与签发
+  时的绑定不一致 → fail-closed（防 agent 密钥替换）。
+- **其它版本** — 拒绝。
+
 ## 签名算法分发
 
 | OID | 验证方式 |

@@ -58,10 +58,12 @@ func selfSigned(key *ecdsa.PrivateKey, cn, realm string, extra []pkix.Extension)
 
 // delegationTBS mirrors the exact TBS the CA verifies (types.DelegationAuthTBS
 // field order + tags), so signatures produced here verify on both sides.
-func delegationTBS(cfg pki.AIC, da *pki.DelegationAuthorization) ([]byte, error) {
+// daVersion is 1 (legacy, no binding) or 2 (with AgentKeyBinding over the
+// agent SPKI, types v0.6.0).
+func delegationTBS(cfg pki.AIC, da *pki.DelegationAuthorization, daVersion int, agentSPKI []byte) ([]byte, error) {
 	pu := cfg.PrincipalUid
 	tbs := pki.DelegationAuthTBS{
-		Version:  1,
+		Version: daVersion,
 		AgentId:  cfg.AgentId,
 		PrincipalUid: pki.PrincipalUid{
 			Version:    pu.Version,
@@ -77,6 +79,13 @@ func delegationTBS(cfg pki.AIC, da *pki.DelegationAuthorization) ([]byte, error)
 		RequestedLifetime:        da.RequestedLifetime,
 		Timestamp:                da.Timestamp,
 		Nonce:                    da.Nonce,
+	}
+	if daVersion == pki.DAVersion2 {
+		akb, err := pki.MakeAgentKeyBinding(nil, agentSPKI)
+		if err != nil {
+			return nil, err
+		}
+		tbs.AgentKeyBinding = akb
 	}
 	return asn1.Marshal(tbs)
 }
@@ -142,8 +151,17 @@ func main() {
 		return cfg, da
 	}
 
-	buildCertWithAIC := func(cfg pki.AIC, da *pki.DelegationAuthorization, corruptSig bool) (*x509.Certificate, []byte) {
-		tbs, err := delegationTBS(cfg, da)
+	buildCertWithAIC := func(cfg pki.AIC, da *pki.DelegationAuthorization, corruptSig bool, key *ecdsa.PrivateKey, daVersion int) (*x509.Certificate, []byte) {
+		var agentSPKI []byte
+		if daVersion == pki.DAVersion2 {
+			// DA v2 binds the delegation to the certified agent key's SPKI.
+			s, err := x509.MarshalPKIXPublicKey(key.Public())
+			if err != nil {
+				fatal(err)
+			}
+			agentSPKI = s
+		}
+		tbs, err := delegationTBS(cfg, da, daVersion, agentSPKI)
 		if err != nil {
 			fatal(err)
 		}
@@ -166,7 +184,7 @@ func main() {
 		if err != nil {
 			fatal(err)
 		}
-		cert, err := selfSigned(agentKey, "agent-7", "acme",
+		cert, err := selfSigned(key, "agent-7", "acme",
 			[]pkix.Extension{{Id: pki.OIDAIC, Critical: false, Value: aicDER}})
 		if err != nil {
 			fatal(err)
@@ -175,7 +193,7 @@ func main() {
 	}
 
 	cfgGood, daGood := mkAIC()
-	certGood, aicDER := buildCertWithAIC(cfgGood, daGood, false)
+	certGood, aicDER := buildCertWithAIC(cfgGood, daGood, false, agentKey, pki.DAVersion1)
 	if err := writePEM(filepath.Join(*outDir, "aic-good.pem"), "CERTIFICATE", certGood.Raw); err != nil {
 		fatal(err)
 	}
@@ -184,7 +202,7 @@ func main() {
 	}
 
 	cfgT, daT := mkAIC()
-	certT, _ := buildCertWithAIC(cfgT, daT, true)
+	certT, _ := buildCertWithAIC(cfgT, daT, true, agentKey, pki.DAVersion1)
 	if err := writePEM(filepath.Join(*outDir, "aic-tampered.pem"), "CERTIFICATE", certT.Raw); err != nil {
 		fatal(err)
 	}
@@ -199,10 +217,69 @@ func main() {
 	}
 	cfgBad, daBad := mkAIC()
 	cfgBad.PrincipalUid = pki.MakePrincipalUidFromCert("acme", "mallory", mismatchCert)
-	certBad, _ := buildCertWithAIC(cfgBad, daBad, false)
+	certBad, _ := buildCertWithAIC(cfgBad, daBad, false, agentKey, pki.DAVersion1)
 	if err := writePEM(filepath.Join(*outDir, "aic-spki-mismatch.pem"), "CERTIFICATE", certBad.Raw); err != nil {
 		fatal(err)
 	}
 
-	fmt.Printf("vectors written to %s (good/tampered/spki-mismatch/user)\n", *outDir)
+	/* ── DA version 2 (types v0.6.0 AgentKeyBinding) ─────────────────────── */
+
+	// v2 good: AIC version 2, DA signed over the v2 TBS with the
+	// AgentKeyBinding of the certified agent key. Must verify.
+	cfgV2, daV2 := mkAIC()
+	cfgV2.Version = pki.DAVersion2
+	certV2, _ := buildCertWithAIC(cfgV2, daV2, false, agentKey, pki.DAVersion2)
+	if err := writePEM(filepath.Join(*outDir, "aic-v2-good.pem"), "CERTIFICATE", certV2.Raw); err != nil {
+		fatal(err)
+	}
+
+	// v2 tampered: same, DA signature corrupted. Must be rejected.
+	cfgV2T, daV2T := mkAIC()
+	cfgV2T.Version = pki.DAVersion2
+	certV2T, _ := buildCertWithAIC(cfgV2T, daV2T, true, agentKey, pki.DAVersion2)
+	if err := writePEM(filepath.Join(*outDir, "aic-v2-tampered.pem"), "CERTIFICATE", certV2T.Raw); err != nil {
+		fatal(err)
+	}
+
+	// v2 agent-key-swap: the DA is bound to agentKey's SPKI but the
+	// certificate carries a *different* agent key (swapKey). The binding must
+	// catch the swap and the C side must reject it (fail-closed).
+	swapKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		fatal(err)
+	}
+	cfgV2S, daV2S := mkAIC()
+	cfgV2S.Version = pki.DAVersion2
+	spkiBound, err := x509.MarshalPKIXPublicKey(agentKey.Public())
+	if err != nil {
+		fatal(err)
+	}
+	tbsS, err := delegationTBS(cfgV2S, daV2S, pki.DAVersion2, spkiBound)
+	if err != nil {
+		fatal(err)
+	}
+	digestS := sha256.Sum256(tbsS)
+	sigS, err := ecdsa.SignASN1(rand.Reader, userKey, digestS[:])
+	if err != nil {
+		fatal(err)
+	}
+	daV2S.SignatureValue = sigS
+	cfgV2S.DelegationAuthorization.SignatureValue = sigS
+	if err := pki.ValidateAIC(&cfgV2S); err != nil {
+		fatal(fmt.Errorf("validate AIC (swap): %w", err))
+	}
+	aicDERs, err := asn1.Marshal(cfgV2S)
+	if err != nil {
+		fatal(err)
+	}
+	certSwap, err := selfSigned(swapKey, "agent-7", "acme",
+		[]pkix.Extension{{Id: pki.OIDAIC, Critical: false, Value: aicDERs}})
+	if err != nil {
+		fatal(err)
+	}
+	if err := writePEM(filepath.Join(*outDir, "aic-v2-swap.pem"), "CERTIFICATE", certSwap.Raw); err != nil {
+		fatal(err)
+	}
+
+	fmt.Printf("vectors written to %s (good/tampered/spki-mismatch/user + v2-good/v2-tampered/v2-swap)\n", *outDir)
 }

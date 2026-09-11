@@ -9,12 +9,22 @@
  * Authorization:
  *
  *   1. Reconstruct DelegationAuthTBS with the exact field order used by the
- *      client signer and gateway-lib.
+ *      client signer and gateway-lib. DA version 2 (types v0.6.0) appends a
+ *      [1] EXPLICIT AgentKeyBinding over the agent's SPKI (keyHash =
+ *      SHA-256(SPKI)), binding the delegation to the agent key being
+ *      certified.
  *   2. Cross-validate: principalUid.keyHash must equal SHA-256(SPKI) of the
  *      user (principal) certificate found among the supplied certs.
  *   3. Verify the DA signature with the user certificate's public key,
  *      dispatching on the declared signatureAlgorithm OID (ECDSA / RSA-PKCS1
  *      / RSA-PSS / Ed25519).
+ *
+ * DA version negotiation (mirrors core):
+ *   - AIC version 0 (unspecified): try v2 first (when an agent SPKI is
+ *     supplied), then fall back to v1. Transparently accepts legacy DAs.
+ *   - AIC version 1: v1 only (legacy DER, no AgentKeyBinding).
+ *   - AIC version 2: v2 only — requires a non-empty agent SPKI, fail-closed.
+ *   - any other version: rejected (fail-closed).
  *
  * These hooks are OFF by default — stock OpenSSL verification behaviour is
  * unchanged. Enable explicitly with AIC_verify_cert() or the default
@@ -59,8 +69,24 @@ int AIC_verify_cert(X509 *cert, STACK_OF(X509) *untrusted,
 
 /*
  * Verify the DA signature of `da` over the reconstructed DelegationAuthTBS
- * using `userPub` (the principal's public key) and the optional hash-algo
- * override for the keyHash cross-check. Low-level entry point (unit tests).
+ * using `userPub` (the principal's public key). Low-level entry point.
+ *
+ * DA version negotiation is driven by the AIC version (see file header):
+ * version 0 → tries v2 (when agentSPKI supplied) then v1; 1 → v1 only;
+ * 2 → v2 only (fail-closed without agentSPKI). On success, *daVersion (may
+ * be NULL) receives the version actually verified (1 or 2).
+ */
+int AIC_verify_da_ex(const AIC_DELEGATIONAUTH *da,
+                     const AIC_PRINCIPALUID *pu,
+                     const AIC *aic,            /* provides TBS fields + DA version */
+                     EVP_PKEY *userPub,
+                     const unsigned char *agentSPKI, size_t agentSPKILen,
+                     int *daVersion);
+
+/*
+ * Legacy convenience entry: DA version 1 only (no AgentKeyBinding). Kept for
+ * callers with pre-v0.6.0 AIC certificates. Equivalent to AIC_verify_da_ex()
+ * with agentSPKI == NULL (version negotiation then only ever yields v1).
  */
 int AIC_verify_da(const AIC_DELEGATIONAUTH *da,
                   const AIC_PRINCIPALUID *pu,

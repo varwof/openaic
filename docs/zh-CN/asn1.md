@@ -103,9 +103,30 @@ DelegationAuthTBS ::= SEQUENCE {
     authorizationConstraints [0] EXPLICIT SEQUENCE OF Capability OPTIONAL,
     requestedLifetime        INTEGER DEFAULT 0,
     timestamp                GeneralizedTime,
-    nonce                    OCTET STRING
+    nonce                    OCTET STRING,
+    agentKeyBinding          [1] EXPLICIT AgentKeyBinding OPTIONAL
 }
 ```
+
+### AgentKeyBinding（DA 版本 2，types v0.6.0）
+
+DA TBS 版本 2 把委托绑定到实际被签发的 agent 密钥上，封堵"在同一 DA 下换用
+另一个 agent 密钥"的攻击。验签时根据 agent 证书的 SPKI 重建绑定
+（`keyHash = SHA-256(SPKI DER)`），因此 v2 TBS 只有对当初被签发的那把 agent
+密钥才验签通过。`hashAlgo` 始终以裸 `SEQUENCE { OID }`（SHA-256，无 NULL
+参数）发出，与 Go `MakeAgentKeyBinding` 逐字节一致。
+
+```
+AgentKeyBinding ::= SEQUENCE {
+    keyHash  OCTET STRING (SIZE(1..64)),
+    hashAlgo [0] EXPLICIT AlgorithmIdentifier OPTIONAL
+}
+```
+
+版本规则（对应 `types.ValidateDelegationAuthTBSVersion`）：1 → 绑定必须缺失；
+2 → 必须存在且有效；其它版本 → 拒绝。验签按 AIC 的 version 协商：0/未指定先
+试 v2、再回退 v1（兼容旧证书），1 → 仅 v1，2 → 仅 v2（无 agent SPKI 则
+fail-closed）。
 
 ## 一致性验证方法
 

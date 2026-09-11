@@ -44,6 +44,24 @@ typedef struct AIC_REASON_st {
 DECLARE_ASN1_FUNCTIONS(AIC_REASON)
 
 /*
+ * AIC_AGENTKEYBINDING — DA version 2 agent SPKI binding (types v0.6.0).
+ * ASN.1 SEQUENCE {
+ *   keyHash  OCTET STRING (SIZE(1..64)),
+ *   hashAlgo [0] EXPLICIT AlgorithmIdentifier OPTIONAL
+ * }
+ * keyHash = hashAlgo(agent SPKI DER); hashAlgo defaults to SHA-256 when
+ * omitted. Present only inside DelegationAuthTBS [1] for DA version 2 —
+ * it binds the delegation to the agent key actually being certified,
+ * closing the "swap a different agent key under the same DA" attack.
+ */
+typedef struct AIC_AGENTKEYBINDING_st {
+    ASN1_OCTET_STRING *keyHash;
+    X509_ALGOR *hashAlgo;    /* [0] EXPLICIT, OPTIONAL */
+} AIC_AGENTKEYBINDING;
+
+DECLARE_ASN1_FUNCTIONS(AIC_AGENTKEYBINDING)
+
+/*
  * AIC_CAPABILITY — a single capability.
  * ASN.1 SEQUENCE {
  *   schemeId     UTF8String,

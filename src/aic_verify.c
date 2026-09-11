@@ -23,7 +23,9 @@
 /*
  * ── DelegationAuthTBS reconstruction ──────────────────────────────────────
  *
- * Mirrors types.DelegationAuthTBS exactly (order + tags):
+ * Mirrors types.DelegationAuthTBS exactly (order + tags). DA version 2
+ * (v0.6.0) appends a trailing agentKeyBinding [1] EXPLICIT binding the
+ * delegation to the agent's SPKI (keyHash = SHA-256(SPKI)):
  *   SEQUENCE {
  *     version                  INTEGER DEFAULT 1,
  *     agentId                  UTF8String,
@@ -34,7 +36,11 @@
  *     authorizationConstraints [0] EXPLICIT SEQUENCE OF Capability OPTIONAL,
  *     requestedLifetime        INTEGER DEFAULT 0,
  *     timestamp                GeneralizedTime,
- *     nonce                    OCTET STRING
+ *     nonce                    OCTET STRING,
+ *     agentKeyBinding          [1] EXPLICIT SEQUENCE {
+ *                                keyHash  OCTET STRING (SIZE(1..64)),
+ *                                hashAlgo [0] EXPLICIT AlgorithmIdentifier OPTIONAL
+ *                              } OPTIONAL
  *   }
  */
 
@@ -49,6 +55,7 @@ typedef struct AIC_DATBS_st {
     ASN1_INTEGER *requestedLifetime;
     ASN1_GENERALIZEDTIME *timestamp;
     ASN1_OCTET_STRING *nonce;
+    AIC_AGENTKEYBINDING *agentKeyBinding;
 } AIC_DATBS;
 
 ASN1_SEQUENCE(AIC_DATBS) = {
@@ -62,21 +69,29 @@ ASN1_SEQUENCE(AIC_DATBS) = {
                              AIC_CAPABILITY, 0),
     ASN1_SIMPLE(AIC_DATBS, requestedLifetime, ASN1_INTEGER),
     ASN1_SIMPLE(AIC_DATBS, timestamp, ASN1_GENERALIZEDTIME),
-    ASN1_SIMPLE(AIC_DATBS, nonce, ASN1_OCTET_STRING)
+    ASN1_SIMPLE(AIC_DATBS, nonce, ASN1_OCTET_STRING),
+    ASN1_EXP_OPT(AIC_DATBS, agentKeyBinding, AIC_AGENTKEYBINDING, 1)
 } static_ASN1_SEQUENCE_END(AIC_DATBS)
 
 DECLARE_ASN1_FUNCTIONS(AIC_DATBS)
 IMPLEMENT_ASN1_FUNCTIONS(AIC_DATBS)
 
 static AIC_DATBS *aic_build_tbs(const AIC *aic,
-                                const AIC_DELEGATIONAUTH *da)
+                                const AIC_DELEGATIONAUTH *da,
+                                int da_version,
+                                const unsigned char *agentSPKI,
+                                size_t agentSPKILen)
 {
     AIC_DATBS *tbs = AIC_DATBS_new();
     int i;
     if (tbs == NULL)
         return NULL;
-    if (aic->version != NULL && !ASN1_INTEGER_set(tbs->version,
-                                                  ASN1_INTEGER_get(aic->version)))
+    if (da_version != 1 && da_version != 2)
+        goto err;
+    /* The TBS version is explicit (matches Go: version is always emitted).
+     * DA v2 differs from v1 only in the version value and the trailing
+     * AgentKeyBinding. */
+    if (!ASN1_INTEGER_set(tbs->version, da_version))
         goto err;
     if (aic->agentId != NULL && !ASN1_STRING_copy(tbs->agentId, aic->agentId))
         goto err;
@@ -139,6 +154,31 @@ static AIC_DATBS *aic_build_tbs(const AIC *aic,
                                                     da->nonce->data,
                                                     da->nonce->length))
         goto err;
+
+    if (da_version == 2) {
+        unsigned char md[SHA256_DIGEST_LENGTH];
+        /* Fail-closed: a v2 TBS without the agent SPKI cannot be rebuilt. */
+        if (agentSPKI == NULL || agentSPKILen == 0)
+            goto err;
+        tbs->agentKeyBinding = AIC_AGENTKEYBINDING_new();
+        if (tbs->agentKeyBinding == NULL)
+            goto err;
+        tbs->agentKeyBinding->keyHash = ASN1_OCTET_STRING_new();
+        if (tbs->agentKeyBinding->keyHash == NULL)
+            goto err;
+        SHA256(agentSPKI, agentSPKILen, md);
+        if (!ASN1_OCTET_STRING_set(tbs->agentKeyBinding->keyHash,
+                                   md, SHA256_DIGEST_LENGTH))
+            goto err;
+        /* hashAlgo is always emitted (matches Go MakeAgentKeyBinding which
+         * sets it even for the SHA-256 default), as a bare SEQUENCE { OID }
+         * with no NULL parameters so the TBS DER is byte-identical. */
+        tbs->agentKeyBinding->hashAlgo = X509_ALGOR_new();
+        if (tbs->agentKeyBinding->hashAlgo == NULL)
+            goto err;
+        X509_ALGOR_set0(tbs->agentKeyBinding->hashAlgo,
+                        OBJ_nid2obj(NID_sha256), V_ASN1_UNDEF, NULL);
+    }
     return tbs;
  err:
     AIC_DATBS_free(tbs);
@@ -180,8 +220,14 @@ static int is_pss_oid(const ASN1_OBJECT *algo)
  * ── core DA verification ──────────────────────────────────────────────────
  */
 
-int AIC_verify_da(const AIC_DELEGATIONAUTH *da, const AIC_PRINCIPALUID *pu,
-                  const AIC *aic, EVP_PKEY *userPub)
+/* Verify the DA signature over a single DelegationAuthTBS version. */
+static int aic_verify_da_one(const AIC_DELEGATIONAUTH *da,
+                             const AIC_PRINCIPALUID *pu,
+                             const AIC *aic,
+                             EVP_PKEY *userPub,
+                             int da_version,
+                             const unsigned char *agentSPKI,
+                             size_t agentSPKILen)
 {
     AIC_DATBS *tbs = NULL;
     EVP_MD_CTX *mctx = NULL;
@@ -197,7 +243,7 @@ int AIC_verify_da(const AIC_DELEGATIONAUTH *da, const AIC_PRINCIPALUID *pu,
     if (algo == NULL || da->signatureValue == NULL)
         return 0;
 
-    tbs = aic_build_tbs(aic, da);
+    tbs = aic_build_tbs(aic, da, da_version, agentSPKI, agentSPKILen);
     if (tbs == NULL)
         goto out;
     derlen = i2d_AIC_DATBS(tbs, &der);
@@ -243,6 +289,59 @@ int AIC_verify_da(const AIC_DELEGATIONAUTH *da, const AIC_PRINCIPALUID *pu,
     AIC_DATBS_free(tbs);
     EVP_MD_CTX_free(mctx);
     return ret;
+}
+
+int AIC_verify_da_ex(const AIC_DELEGATIONAUTH *da, const AIC_PRINCIPALUID *pu,
+                     const AIC *aic, EVP_PKEY *userPub,
+                     const unsigned char *agentSPKI, size_t agentSPKILen,
+                     int *daVersion)
+{
+    int version;
+    int ok;
+
+    if (daVersion != NULL)
+        *daVersion = 0;
+    if (da == NULL || pu == NULL || aic == NULL || userPub == NULL)
+        return 0;
+
+    version = aic->version == NULL ? 0 : (int)ASN1_INTEGER_get(aic->version);
+    switch (version) {
+    case 0:
+        /* Unspecified: try v2 first (harder target, needs agent SPKI), then
+         * fall back to v1 so pre-v0.6.0 certs still verify. Mirrors core. */
+        if (agentSPKI != NULL && agentSPKILen > 0
+            && aic_verify_da_one(da, pu, aic, userPub, 2,
+                                 agentSPKI, agentSPKILen)) {
+            if (daVersion != NULL) *daVersion = 2;
+            return 1;
+        }
+        if (aic_verify_da_one(da, pu, aic, userPub, 1, NULL, 0)) {
+            if (daVersion != NULL) *daVersion = 1;
+            return 1;
+        }
+        return 0;
+    case 1:
+        ok = aic_verify_da_one(da, pu, aic, userPub, 1, NULL, 0);
+        if (ok && daVersion != NULL) *daVersion = 1;
+        return ok;
+    case 2:
+        /* Fail-closed: v2 without an agent SPKI cannot be validated. */
+        if (agentSPKI == NULL || agentSPKILen == 0)
+            return 0;
+        ok = aic_verify_da_one(da, pu, aic, userPub, 2,
+                               agentSPKI, agentSPKILen);
+        if (ok && daVersion != NULL) *daVersion = 2;
+        return ok;
+    default:
+        /* Unsupported version (types rule: only 1 and 2 are valid). */
+        return 0;
+    }
+}
+
+int AIC_verify_da(const AIC_DELEGATIONAUTH *da, const AIC_PRINCIPALUID *pu,
+                  const AIC *aic, EVP_PKEY *userPub)
+{
+    return AIC_verify_da_ex(da, pu, aic, userPub, NULL, 0, NULL);
 }
 
 /* SPKI hash cross-check: principalUid.keyHash == SHA-256(SPKI DER). */
@@ -393,8 +492,22 @@ int AIC_verify_cert(X509 *cert, STACK_OF(X509) *untrusted,
         if (userPub == NULL)
             goto fail;
         da = AIC_get_delegationAuthorization(aic);
-        if (!AIC_verify_da(da, aic->principalUid, aic, userPub))
-            goto fail;
+        {
+            /* DA v2 binds the delegation to the agent key actually being
+             * certified, so the agent SPKI comes from `cert` itself. */
+            X509_PUBKEY *aspk = X509_get_X509_PUBKEY(cert);
+            unsigned char *aspki = NULL;
+            int aspki_len = 0;
+            int ok;
+            if (aspk != NULL)
+                aspki_len = i2d_X509_PUBKEY(aspk, &aspki);
+            ok = AIC_verify_da_ex(da, aic->principalUid, aic, userPub,
+                                  aspki, aspki_len <= 0 ? 0 : (size_t)aspki_len,
+                                  NULL);
+            OPENSSL_free(aspki);
+            if (!ok)
+                goto fail;
+        }
     }
 
     rc = 1;

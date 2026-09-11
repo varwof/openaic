@@ -58,6 +58,7 @@ int main(int argc, char **argv)
     const char *vd = argc > 1 ? argv[1] : "test/vectors/out";
     char path[1024];
     X509 *agent, *user, *tampered, *mismatch;
+    X509 *v2good, *v2tampered, *v2swap;
     AIC *aic;
     STACK_OF(X509) *untrusted = NULL;
     AIC_VERIFY_OPTS opts;
@@ -70,6 +71,18 @@ int main(int argc, char **argv)
     snprintf(path, sizeof(path), "%s/aic-good.pem", vd);
     agent = load_cert(path);
     CHECK(agent != NULL, "load aic-good.pem");
+
+    snprintf(path, sizeof(path), "%s/aic-v2-good.pem", vd);
+    v2good = load_cert(path);
+    CHECK(v2good != NULL, "load aic-v2-good.pem");
+
+    snprintf(path, sizeof(path), "%s/aic-v2-tampered.pem", vd);
+    v2tampered = load_cert(path);
+    CHECK(v2tampered != NULL, "load aic-v2-tampered.pem");
+
+    snprintf(path, sizeof(path), "%s/aic-v2-swap.pem", vd);
+    v2swap = load_cert(path);
+    CHECK(v2swap != NULL, "load aic-v2-swap.pem");
 
     /* 1. d2i round trip of raw DER */
     {
@@ -120,6 +133,18 @@ int main(int argc, char **argv)
     CHECK(aic != NULL && AIC_validate(aic, NULL) == 1, "aic-spki-mismatch structurally valid (hash broken)");
     AIC_free(aic);
 
+    /* DA v2 vectors: version 2 must parse and validate. */
+    aic = extract_aic(v2good, &crit);
+    CHECK(aic != NULL && AIC_validate(aic, NULL) == 1, "aic-v2-good validates");
+    CHECK(aic != NULL && ASN1_INTEGER_get(aic->version) == 2, "aic-v2-good DA version = 2");
+    AIC_free(aic);
+    aic = extract_aic(v2tampered, &crit);
+    CHECK(aic != NULL && AIC_validate(aic, NULL) == 1, "aic-v2-tampered structurally valid (sig broken)");
+    AIC_free(aic);
+    aic = extract_aic(v2swap, &crit);
+    CHECK(aic != NULL && AIC_validate(aic, NULL) == 1, "aic-v2-swap structurally valid (binding catches swap)");
+    AIC_free(aic);
+
     /* 3. verification */
     untrusted = sk_X509_new_null();
     CHECK(untrusted != NULL && sk_X509_push(untrusted, user), "untrusted stack");
@@ -136,6 +161,17 @@ int main(int argc, char **argv)
     rc = AIC_verify_cert(mismatch, untrusted, &opts);
     CHECK(rc == 0, "aic-spki-mismatch rejected");
 
+    /* DA v2: good verifies (negotiation → v2 agent binding); tampered and
+     * the agent-key-swap must be rejected (fail-closed). */
+    rc = AIC_verify_cert(v2good, untrusted, &opts);
+    CHECK(rc == 1, "aic-v2-good verifies with user-principal (DA v2 agent binding)");
+
+    rc = AIC_verify_cert(v2tampered, untrusted, &opts);
+    CHECK(rc == 0, "aic-v2-tampered rejected");
+
+    rc = AIC_verify_cert(v2swap, untrusted, &opts);
+    CHECK(rc == 0, "aic-v2-swap rejected (agent key swap caught by binding)");
+
     /* 4. JSON helper layer */
     CHECK(openaic_validate_capability_params("max-concurrent",
           (const unsigned char *)"{\"max\":3}", 9) == 1, "json: max-concurrent {\"max\":3}");
@@ -151,6 +187,9 @@ int main(int argc, char **argv)
     X509_free(agent);
     X509_free(tampered);
     X509_free(mismatch);
+    X509_free(v2good);
+    X509_free(v2tampered);
+    X509_free(v2swap);
 
     printf("%s: %d failure(s)\n", failures == 0 ? "PASS" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
