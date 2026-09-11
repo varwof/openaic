@@ -1,5 +1,8 @@
 # openaic — AIC (Authorization in Certificates) for OpenSSL 3.5 LTS
 
+> ⭐ Like this repo? Give a star to the flagship one:
+> [![GitHub stars](https://img.shields.io/github/stars/varwof/core?style=social&label=varwof/core)](https://github.com/varwof/core)
+
 > **⚠️ Experimental.** This C/OpenSSL implementation requires patching and
 > rebuilding OpenSSL 3.5 from source. It is **not** maintained to green CI and
 > may not build in every environment. **Not for production use.** For
